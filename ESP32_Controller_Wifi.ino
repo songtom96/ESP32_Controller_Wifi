@@ -1,4 +1,4 @@
-#include <DHT.h>
+#include <DHT20.h>
 #include <WiFi.h>
 // #include <time.h>
 // #include "test_library.h"
@@ -6,8 +6,11 @@
 // Sensor & Actuators
 #define RELAY_PIN_12 25
 #define RELAY_PIN_24 27
-#define DHTTYPE DHT11
-#define DHTPIN 17
+// I2C pins
+#define SDA1 0
+#define SCL1 4
+
+DHT20 DHT(&Wire);  //  2nd I2C interface
 
 //Timer Scale
 #define sFactor 1000000
@@ -82,15 +85,13 @@ String header;
 float temp = 0.0;
 float humidity = 0.0;
 
-DHT dht(DHTPIN, DHTTYPE);
-
 WiFiServer server(80);
 
 void setup() {
   Serial.begin(115200);
   pinMode(RELAY_PIN_12, OUTPUT);
   pinMode(RELAY_PIN_24, OUTPUT);
-  dht.begin();
+  Wire.begin(SDA1, SCL1);  // Start I2C on defined pins
   while (!Serial) {
   }
 
@@ -108,17 +109,17 @@ void setup() {
     delay(500);
     Serial.print(".");
   }
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("");
-    Serial.print("Connecting to ");
-    Serial.println(ssid2);
-    WiFi.begin(ssid2, password2);
-    wifiTimeout = millis();
-    while (WiFi.status() != WL_CONNECTED && ((millis() - wifiTimeout) < 5000)) {
-      delay(500);
-      Serial.print(".");
-    }
-  }
+  // if (WiFi.status() != WL_CONNECTED) {
+  //   Serial.println("");
+  //   Serial.print("Connecting to ");
+  //   Serial.println(ssid2);
+  //   WiFi.begin(ssid2, password2);
+  //   wifiTimeout = millis();
+  //   while (WiFi.status() != WL_CONNECTED && ((millis() - wifiTimeout) < 5000)) {
+  //     delay(500);
+  //     Serial.print(".");
+  //   }
+  // }
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("");
     Serial.println("WiFi connected.");
@@ -191,7 +192,7 @@ void loop() {
       case idling:
         if (!isIdle) {
           isIdle = true;
-          intervalCounter = intervalTime * 60;
+          intervalCounter = intervalTime; //in minutes currently //intervalTime * 60
           controlRelay(1, 0, 0);
           ESP_ERROR_CHECK(esp_timer_start_once(idle_timer, 1 * mFactor));
           Serial.println("Idling...");
@@ -209,12 +210,42 @@ void loop() {
 * RETURN: true on success and false on fail
 */
 bool updateDHTData() {
-  float t = dht.readTemperature();
-  float h = dht.readHumidity();
-  if (!(isnan(t) | isnan(h))) {
-    temp = t;
-    humidity = h;
-    return true;
+  int status = DHT.read();
+  // switch (status) {
+  //   case DHT20_OK:
+  //     Serial.print("OK,\t");
+  //     break;
+  //   case DHT20_ERROR_CHECKSUM:
+  //     Serial.print("Checksum error,\t");
+  //     break;
+  //   case DHT20_ERROR_CONNECT:
+  //     Serial.print("Connect error,\t");
+  //     break;
+  //   case DHT20_MISSING_BYTES:
+  //     Serial.print("Missing bytes,\t");
+  //     break;
+  //   case DHT20_ERROR_BYTES_ALL_ZERO:
+  //     Serial.print("All bytes read zero");
+  //     break;
+  //   case DHT20_ERROR_READ_TIMEOUT:
+  //     Serial.print("Read time out");
+  //     break;
+  //   case DHT20_ERROR_LASTREAD:
+  //     Serial.print("Error read too fast");
+  //     break;
+  //   default:
+  //     Serial.print("Unknown error,\t");
+  //     break;
+  // }
+  Serial.println("");
+  if (status == DHT20_OK) {
+    float t = DHT.getTemperature();
+    float h = DHT.getHumidity();
+    if (!(isnan(t) | isnan(h)) && (t < 99 && h > 5)) {
+      temp = t;
+      humidity = h;
+      return true;
+    }
   }
   return false;
 }
@@ -288,7 +319,7 @@ void wifiProtocol() {
                   Serial.println("Min Interval Time reached...");
                 }
               } else if (header.indexOf("GET /intervalTime/up") >= 0) {
-                if (intervalTime < 24) {
+                if (intervalTime < 60) {
                   Serial.println("Interval Time up");
                   intervalTime++;
                 } else {
@@ -343,9 +374,9 @@ void wifiProtocol() {
               client.println(setpointHumidity);
               client.println("%");
               client.println("  <a href=\"/humd/down\"><button class=\"button\">-</button></a><a href=\"/humd/up\"><button class=\"button\">+</button></a></p>");
-              client.println("<p><br></p><p>Ventilation Intervals: ");
+              client.println("<p><br></p><p>Vent Intervals: ");
               client.println(intervalTime);
-              client.println(" Hours <a href=\"/intervalTime/down\"><button class=\"button\">-</button></a><a href=\"/intervalTime/up\"><button class=\"button\">+</button></a>");
+              client.println(" Minutes <a href=\"/intervalTime/down\"><button class=\"button\">-</button></a><a href=\"/intervalTime/up\"><button class=\"button\">+</button></a>");
               client.println("<br>Vent Duration: ");
               client.println(ventTime);
               client.println(" Minutes <a href=\"/ventTime/down\"><button class=\"button\">-</button></a><a href=\"/ventTime/up\"><button class=\"button\">+</button></a>");
@@ -413,8 +444,8 @@ void relayShutdown() {
   controlRelay(1, 1, 0);
 }
 
-void IRAM_ATTR timer0_ISR() {
-}
+// void IRAM_ATTR timer0_ISR() {
+// }
 
 static void vent_timer_ISR(void* arg) {
   isVenting = false;
